@@ -2,6 +2,12 @@
 
 A small Space Invaders clone built with Pygame and packaged for Windows using a custom `spaceicon`.
 
+Features:
+- Animated enemies and procedural retro sound effects
+- Start menu and pause/resume flow
+- Endless wave progression with rising difficulty
+- Persistent high score saved to `data/highscore.json`
+
 ## Run Locally
 
 ```powershell
