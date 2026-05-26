@@ -1,3 +1,4 @@
+from array import array
 import math
 import random
 import sys
@@ -71,13 +72,57 @@ class Enemy:
     def rect(self) -> pygame.Rect:
         return pygame.Rect(self.x, self.y, self.width, self.height)
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(self, surface: pygame.Surface, phase: int) -> None:
         if not self.alive:
             return
         body = pygame.Rect(self.x, self.y, self.width, self.height)
         pygame.draw.rect(surface, (255, 120, 90), body, border_radius=8)
         pygame.draw.circle(surface, (50, 10, 10), (self.x + 12, self.y + 12), 3)
         pygame.draw.circle(surface, (50, 10, 10), (self.x + 32, self.y + 12), 3)
+        leg_y = self.y + self.height - 2
+        spread = 6 if phase == 0 else 10
+        pygame.draw.line(surface, (255, 160, 130), (self.x + 10, leg_y), (self.x + 10 - spread, leg_y + 8), 2)
+        pygame.draw.line(surface, (255, 160, 130), (self.x + 22, leg_y), (self.x + 22, leg_y + 8), 2)
+        pygame.draw.line(surface, (255, 160, 130), (self.x + 34, leg_y), (self.x + 34 + spread, leg_y + 8), 2)
+
+
+class SoundBank:
+    def __init__(self) -> None:
+        self.enabled = True
+        try:
+            self.shoot = make_tone(820, 70, 0.25)
+            self.explode = make_tone(220, 130, 0.35)
+            self.hit = make_tone(150, 190, 0.35)
+            self.win = make_tone(960, 240, 0.3)
+            self.lose = make_tone(110, 300, 0.35)
+        except pygame.error:
+            self.enabled = False
+
+    def play(self, sound_name: str) -> None:
+        if not self.enabled:
+            return
+        sound = getattr(self, sound_name, None)
+        if sound:
+            sound.play()
+
+
+def make_tone(frequency: int, duration_ms: int, volume: float) -> pygame.mixer.Sound:
+    sample_rate = 44100
+    total = int(sample_rate * duration_ms / 1000)
+    amp = int(32767 * volume)
+    fade = max(1, int(total * 0.07))
+    samples = array("h")
+
+    for i in range(total):
+        env = 1.0
+        if i < fade:
+            env = i / fade
+        elif i > total - fade:
+            env = (total - i) / fade
+        val = int(amp * env * math.sin(2.0 * math.pi * frequency * i / sample_rate))
+        samples.append(val)
+
+    return pygame.mixer.Sound(buffer=samples.tobytes())
 
 
 def make_enemy_grid() -> list[Enemy]:
@@ -105,44 +150,65 @@ def draw_starfield(surface: pygame.Surface, tick: int) -> None:
         pygame.draw.circle(surface, (60, 80, 170), (cx, cy), 14, width=2)
 
 
+def reset_game() -> tuple[Player, list[Enemy], list[Bullet], list[Bullet], int, int, int, bool]:
+    return Player(), make_enemy_grid(), [], [], 1, ENEMY_BASE_SPEED, 0, False
+
+
 def run() -> None:
+    pygame.mixer.pre_init(44100, -16, 1, 512)
     pygame.init()
     pygame.display.set_caption("Space Invaders")
     screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
     clock = pygame.time.Clock()
 
-    title_font = pygame.font.SysFont("consolas", 28, bold=True)
+    title_font = pygame.font.SysFont("consolas", 42, bold=True)
+    mid_font = pygame.font.SysFont("consolas", 28, bold=True)
     ui_font = pygame.font.SysFont("consolas", 22)
+    tiny_font = pygame.font.SysFont("consolas", 18)
+    sounds = SoundBank()
 
-    player = Player()
-    enemies = make_enemy_grid()
-    player_bullets: list[Bullet] = []
-    enemy_bullets: list[Bullet] = []
-
-    enemy_direction = 1
-    enemy_speed = ENEMY_BASE_SPEED
+    player, enemies, player_bullets, enemy_bullets, enemy_direction, enemy_speed, shot_cooldown, won_sound_played = reset_game()
 
     score = 0
     lives = 3
     tick = 0
-    shot_cooldown = 0
-    game_over = False
+    state = "menu"
     victory = False
 
     while True:
         dt = clock.tick(FPS)
         tick += dt
+        anim_phase = (tick // 260) % 2
 
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 pygame.quit()
                 sys.exit(0)
-            if event.type == pygame.KEYDOWN and game_over and event.key == pygame.K_r:
-                run()
+            if event.type == pygame.KEYDOWN:
+                if state == "menu" and event.key in (pygame.K_RETURN, pygame.K_SPACE):
+                    player, enemies, player_bullets, enemy_bullets, enemy_direction, enemy_speed, shot_cooldown, won_sound_played = reset_game()
+                    score = 0
+                    lives = 3
+                    victory = False
+                    state = "playing"
+                elif state == "playing" and event.key == pygame.K_p:
+                    state = "paused"
+                elif state == "paused" and event.key == pygame.K_p:
+                    state = "playing"
+                elif state == "paused" and event.key == pygame.K_ESCAPE:
+                    state = "menu"
+                elif state == "game_over" and event.key == pygame.K_r:
+                    player, enemies, player_bullets, enemy_bullets, enemy_direction, enemy_speed, shot_cooldown, won_sound_played = reset_game()
+                    score = 0
+                    lives = 3
+                    victory = False
+                    state = "playing"
+                elif state == "game_over" and event.key == pygame.K_ESCAPE:
+                    state = "menu"
 
         keys = pygame.key.get_pressed()
 
-        if not game_over:
+        if state == "playing":
             direction = 0
             if keys[pygame.K_LEFT] or keys[pygame.K_a]:
                 direction -= 1
@@ -154,12 +220,16 @@ def run() -> None:
                 shot_cooldown -= 1
             if (keys[pygame.K_SPACE] or keys[pygame.K_UP]) and shot_cooldown == 0:
                 player_bullets.append(Bullet(player.x + player.width // 2, player.y - 8, -BULLET_SPEED, True))
+                sounds.play("shoot")
                 shot_cooldown = 12
 
             living = [enemy for enemy in enemies if enemy.alive]
             if not living:
-                game_over = True
+                state = "game_over"
                 victory = True
+                if not won_sound_played:
+                    sounds.play("win")
+                    won_sound_played = True
 
             boundary_hit = False
             for enemy in living:
@@ -172,8 +242,9 @@ def run() -> None:
                 for enemy in living:
                     enemy.y += ENEMY_DROP
                     if enemy.y + enemy.height >= player.y:
-                        game_over = True
+                        state = "game_over"
                         victory = False
+                        sounds.play("lose")
 
             if living and random.random() < 0.03:
                 shooter = random.choice(living)
@@ -192,6 +263,7 @@ def run() -> None:
                     if enemy.alive and bullet.rect.colliderect(enemy.rect):
                         enemy.alive = False
                         score += 100
+                        sounds.play("explode")
                         if bullet in player_bullets:
                             player_bullets.remove(bullet)
                         break
@@ -200,27 +272,43 @@ def run() -> None:
                 if bullet.rect.colliderect(player.rect):
                     enemy_bullets.remove(bullet)
                     lives -= 1
+                    sounds.play("hit")
                     if lives <= 0:
-                        game_over = True
+                        state = "game_over"
                         victory = False
+                        sounds.play("lose")
 
         draw_starfield(screen, tick)
-        player.draw(screen)
-        for enemy in enemies:
-            enemy.draw(screen)
-        for bullet in player_bullets + enemy_bullets:
-            bullet.draw(screen)
+        if state == "menu":
+            title = title_font.render("SPACE INVADERS", True, (180, 245, 255))
+            prompt = mid_font.render("Press ENTER to launch", True, (255, 235, 150))
+            controls = tiny_font.render("A/D or LEFT/RIGHT move | SPACE shoots | P pauses", True, (230, 230, 255))
+            screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 240))
+            screen.blit(prompt, (SCREEN_WIDTH // 2 - prompt.get_width() // 2, 320))
+            screen.blit(controls, (SCREEN_WIDTH // 2 - controls.get_width() // 2, 372))
+        else:
+            player.draw(screen)
+            for enemy in enemies:
+                enemy.draw(screen, int(anim_phase))
+            for bullet in player_bullets + enemy_bullets:
+                bullet.draw(screen)
 
-        score_text = ui_font.render(f"SCORE: {score}", True, (230, 230, 255))
-        lives_text = ui_font.render(f"LIVES: {lives}", True, (230, 230, 255))
-        screen.blit(score_text, (24, 20))
-        screen.blit(lives_text, (SCREEN_WIDTH - 150, 20))
+            score_text = ui_font.render(f"SCORE: {score}", True, (230, 230, 255))
+            lives_text = ui_font.render(f"LIVES: {lives}", True, (230, 230, 255))
+            screen.blit(score_text, (24, 20))
+            screen.blit(lives_text, (SCREEN_WIDTH - 150, 20))
 
-        if game_over:
+        if state == "paused":
+            paused_text = mid_font.render("PAUSED", True, (255, 230, 120))
+            hint_text = ui_font.render("Press P to continue or ESC for menu", True, (240, 240, 240))
+            screen.blit(paused_text, (SCREEN_WIDTH // 2 - paused_text.get_width() // 2, SCREEN_HEIGHT // 2 - 40))
+            screen.blit(hint_text, (SCREEN_WIDTH // 2 - hint_text.get_width() // 2, SCREEN_HEIGHT // 2 + 10))
+
+        if state == "game_over":
             status = "YOU WIN" if victory else "GAME OVER"
             status_color = (120, 255, 160) if victory else (255, 120, 120)
-            status_text = title_font.render(status, True, status_color)
-            hint_text = ui_font.render("Press R to restart", True, (240, 240, 240))
+            status_text = mid_font.render(status, True, status_color)
+            hint_text = ui_font.render("Press R to restart or ESC for menu", True, (240, 240, 240))
             screen.blit(status_text, (SCREEN_WIDTH // 2 - status_text.get_width() // 2, SCREEN_HEIGHT // 2 - 40))
             screen.blit(hint_text, (SCREEN_WIDTH // 2 - hint_text.get_width() // 2, SCREEN_HEIGHT // 2 + 8))
 

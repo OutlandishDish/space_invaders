@@ -12,7 +12,10 @@ c:/Users/Rabbi/PythonProjects/space_invaders/.venv/Scripts/python.exe src/main.p
 Controls:
 - Left/Right or A/D: Move
 - Space or Up: Shoot
-- R: Restart after game over
+- Enter (menu): Start game
+- P: Pause/Resume
+- R (game over): Restart
+- Esc (paused/game over): Back to menu
 
 ## Build Windows EXE with Icon
 
